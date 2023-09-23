@@ -1,0 +1,196 @@
+rm -rf ~/a
+rm -rf ~/b
+
+mkdir a
+mkdir b
+
+mv applicationa-0.0.1-SNAPSHOT.jar a
+mv Dockerfile a
+mv app-a-deployment.yml a
+mv app-a-config.yml a
+
+mv applicationb-0.0.1-SNAPSHOT.jar b
+mv Dockerfile b
+mv app-b-deployment.yml b
+mv app-b-config.yml b
+
+export PROJECT_ID=eastern-crawler-395210
+export REGION=europe-west6
+export COMPUTE_ZONE=europe-west6-b
+
+
+
+# Create the image repository
+
+gcloud artifacts repositories create demo-apps-repo \
+    --repository-format=docker \
+    --location=${REGION} \
+    --description="Docker repository"
+
+
+
+# Build images
+
+cd ~/a/
+docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-a:v1 .
+
+cd ~/b/
+docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-b:v1 .
+
+
+
+# Push to artifact registry
+
+gcloud services enable artifactregistry.googleapis.com
+gcloud auth configure-docker ${REGION}-docker.pkg.dev
+docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-a:v1
+docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-b:v1
+
+
+
+# Create a GKE cluster
+
+gcloud config set project ${PROJECT_ID}
+gcloud config set compute/zone $COMPUTE_ZONE
+gcloud container clusters create demo-apps-cluster --machine-type=e2-micro
+kubectl get nodes
+
+
+
+# Deploy to GKE
+
+gcloud container clusters get-credentials demo-apps-cluster --zone $COMPUTE_ZONE
+
+kubectl apply -f a/app-a-config.yml
+kubectl apply -f a/app-a-deployment.yml
+
+kubectl apply -f b/app-b-config.yml
+kubectl apply -f b/app-b-deployment.yml
+
+kubectl autoscale deployment app-b --cpu-percent=80 --min=1 --max=3
+
+
+
+# Expose to the Internet
+
+kubectl expose deployment app-a \
+    --name=app-a-service \
+    --type=LoadBalancer \
+	--port 8081 \
+    --target-port 8081
+kubectl expose deployment app-b \
+    --name=app-b-service \
+    --type=ClusterIP \
+	--port 8082 \
+    --target-port 8082
+
+
+
+# Cleanup
+
+kubectl delete service app-a-service
+kubectl delete service app-b-service
+gcloud artifacts docker images delete ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-a:v1 --delete-tags
+gcloud artifacts docker images delete ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-b:v1 --delete-tags
+gcloud artifacts repositories delete demo-apps-repo --location=${REGION}
+gcloud container clusters delete demo-apps-cluster --zone $COMPUTE_ZONE
+
+
+
+# Postgres setup https://cloud.google.com/kubernetes-engine/docs/tutorials/stateful-workloads/postgresql
+
+export PROJECT_ID=eastern-crawler-395210
+export SOURCE_CLUSTER=cluster-db1
+export REGION=us-central1
+
+gcloud services enable container.googleapis.com
+gcloud services enable gkebackup.googleapis.com
+gcloud services enable artifactregistry.googleapis.com
+gcloud services enable compute.googleapis.com
+gcloud services enable iam.googleapis.com
+gcloud services enable cloudresourcemanager.googleapis.com
+
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/storage.objectViewer # probably not needed
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/logging.logWriter
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/artifactregistry.admin
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/container.clusterAdmin
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/container.serviceAgent # fail
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/serviceusage.serviceUsageAdmin
+gcloud projects add-iam-policy-binding $PROJECT_ID --member="user:marko.nad3@gmail.com" --role=roles/iam.serviceAccountAdmin
+
+git clone https://github.com/GoogleCloudPlatform/kubernetes-engine-samples
+cd kubernetes-engine-samples/gke-stateful-postgres
+
+terraform -chdir=terraform/gke-standard init
+terraform -chdir=terraform/gke-standard apply -var project_id=$PROJECT_ID
+
+gcloud auth configure-docker us-docker.pkg.dev
+./scripts/gcr.sh bitnami/postgresql-repmgr 15.3.0-debian-11-r0
+./scripts/gcr.sh bitnami/postgres-exporter 0.11.1-debian-11-r27
+./scripts/gcr.sh bitnami/pgpool 4.4.2-debian-11-r28
+gcloud artifacts docker images list us-docker.pkg.dev/$PROJECT_ID/main --format="flattened(package)"
+
+gcloud container clusters get-credentials $SOURCE_CLUSTER --region=$REGION --project=$PROJECT_ID
+
+export NAMESPACE=postgresql
+kubectl create namespace $NAMESPACE
+
+cd helm/postgresql-bootstrap
+helm dependency update
+
+helm -n postgresql template postgresql . --set global.imageRegistry="us-docker.pkg.dev/$PROJECT_ID/main"
+helm -n postgresql upgrade --install postgresql . --set global.imageRegistry="us-docker.pkg.dev/$PROJECT_ID/main"
+kubectl get all -n $NAMESPACE
+
+cd ../../
+./scripts/launch-client.sh
+kubectl exec -it pg-client -n postgresql -- /bin/bash
+psql -h $HOST_PGPOOL -U postgres -a -q -f /tmp/scripts/generate-db.sql
+psql -h $HOST_PGPOOL -U postgres -a -q -f /tmp/scripts/count-rows.sql
+export DB=postgres
+pgbench -i -h $HOST_PGPOOL -U postgres $DB -s 50
+exit
+
+
+
+# Monitoring and alerting
+
+cd monitoring
+gcloud monitoring dashboards create --config-from-file=dashboard/postgresql-overview.json --project=$PROJECT_ID
+gcloud monitoring dashboards create --config-from-file dashboard/gke-postgresql.json --project $PROJECT_ID
+
+EMAIL=marko.nad3@gmail.com
+cd alerting/terraform
+terraform init
+terraform plan -var project_id=$PROJECT_ID -var email_address=$EMAIL
+terraform apply -var project_id=$PROJECT_ID -var email_address=$EMAIL
+
+cd ../../../
+kubectl exec -it --namespace $NAMESPACE pg-client -- /bin/bash
+pgbench -i -h $HOST_PGPOOL -U postgres -s 200 postgres
+exit
+
+
+
+# Postgres upgrade procedure
+
+export NAMESPACE=postgresql
+NEW_IMAGE=us-docker.pkg.dev/$PROJECT_ID/main/bitnami/postgresql-repmgr:15.3.0-debian-11-r1
+./scripts/gcr.sh bitnami/postgresql-repmgr 15.3.0-debian-11-r1
+kubectl set image statefulset -n $NAMESPACE postgresql-postgresql-ha-postgresql postgresql=$NEW_IMAGE
+kubectl rollout restart statefulsets -n $NAMESPACE postgresql-postgresql-ha-postgresql
+kubectl rollout status statefulset -n $NAMESPACE postgresql-postgresql-ha-postgresql
+
+
+
+# Simulate disruption
+
+# new session:
+	gcloud container clusters get-credentials $SOURCE_CLUSTER --region=$REGION --project=$PROJECT_ID
+	export NAMESPACE=postgresql
+	kubectl get events -n $NAMESPACE --field-selector=involvedObject.name=postgresql-postgresql-ha-postgresql-0 --watch
+
+kubectl exec -it -n $NAMESPACE postgresql-postgresql-ha-postgresql-0 -c postgresql -- /bin/bash
+export ENTRY='/opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh'
+export RCONF='/opt/bitnami/repmgr/conf/repmgr.conf'
+$ENTRY repmgr -f $RCONF node service --action=stop --checkpoint
