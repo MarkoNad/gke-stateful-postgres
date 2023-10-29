@@ -1,7 +1,10 @@
 package com.gkedemo.web.controller;
 
 import com.gkedemo.domain.User;
-import com.gkedemo.service.UserRepository;
+import com.gkedemo.domain.UserRepository;
+import com.gkedemo.service.UserService;
+import com.gkedemo.web.dto.GetUserItemsResponse;
+import com.gkedemo.web.dto.ItemDto;
 import com.gkedemo.web.dto.UserDto;
 import com.gkedemo.web.mapper.UserMapper;
 import org.slf4j.Logger;
@@ -10,7 +13,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/users")
@@ -22,9 +27,12 @@ public class UserController {
 
     private final UserRepository userRepository;
 
-    public UserController(UserMapper userMapper, UserRepository userRepository) {
+    private final UserService userService;
+
+    public UserController(UserMapper userMapper, UserRepository userRepository, UserService userService) {
         this.userMapper = userMapper;
         this.userRepository = userRepository;
+        this.userService = userService;
     }
 
     @PostMapping
@@ -47,6 +55,16 @@ public class UserController {
         final UserDto userDto = userMapper.toDto(maybeUser.get());
         LOGGER.info("Found user: {}", userDto);
         return ResponseEntity.ok(userDto);
+    }
+
+    @GetMapping("/{id}/items")
+    public ResponseEntity<GetUserItemsResponse> getUserItems(@PathVariable("id") final UUID userId) {
+        LOGGER.info("Get user items called for ID: {}", userId);
+        final Set<String> items = userService.getUserItems(userId);
+        final GetUserItemsResponse response = new GetUserItemsResponse(items.stream().map(ItemDto::new)
+                .collect(Collectors.toSet()));
+        LOGGER.info("Response: {}", response);
+        return ResponseEntity.ok(response);
     }
 
 }

@@ -1,10 +1,10 @@
 server:
   servlet:
-    context-path: /app-a
-  port: 8081
+    context-path: /app-b
+  port: 8082
 spring:
     datasource:
-      url: jdbc:postgresql://localhost:5432/a_database
+      url: jdbc:postgresql://localhost:5432/b_database
       username: postgres
       password: postgres
       driver-class-name: org.postgresql.Driver
@@ -19,5 +19,3 @@ spring:
           dialect: org.hibernate.dialect.PostgreSQLDialect
       console:
         enabled: true
-item-service:
-  url: http://localhost:8082/app-b

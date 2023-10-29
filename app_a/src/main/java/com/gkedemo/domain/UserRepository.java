@@ -1,4 +1,4 @@
-package com.gkedemo.service;
+package com.gkedemo.domain;
 
 import com.gkedemo.domain.User;
 import org.springframework.data.repository.CrudRepository;
