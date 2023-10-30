@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-a
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app-a
+  template:
+    metadata:
+      labels:
+        app: app-a
+    spec:
+      containers:
+        - name: app-a
+          image: europe-west6-docker.pkg.dev/eastern-crawler-395210/demo-apps-repo/application-a:v1
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: app-a-config
