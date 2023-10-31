@@ -1,26 +1,13 @@
-# git@github.com:MarkoNad/gke-stateful-postgres.git
+git clone https://github.com/MarkoNad/gke-stateful-postgres.git
 
-rm -rf ~/a
-rm -rf ~/b
+PROJECT_ROOT=~/gke-stateful-postgres
 
-mkdir a
-mkdir b
-
-mv applicationa-0.0.1-SNAPSHOT.jar a
-mv Dockerfile a
-mv app-a-deployment.yml a
-mv app-a-config.yml a
-
-mv applicationb-0.0.1-SNAPSHOT.jar b
-mv Dockerfile b
-mv app-b-deployment.yml b
-mv app-b-config.yml b
+# mv applicationa-0.0.1-SNAPSHOT.jar a
+# mv applicationb-0.0.1-SNAPSHOT.jar b
 
 export PROJECT_ID=eastern-crawler-395210
 export REGION=europe-west6
 export COMPUTE_ZONE=europe-west6-b
-
-
 
 # Create the image repository
 
@@ -33,10 +20,10 @@ gcloud artifacts repositories create demo-apps-repo \
 
 # Build images
 
-cd ~/a/
+cd $PROJECT_ROOT/docker/a/
 docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-a:v1 .
 
-cd ~/b/
+cd $PROJECT_ROOT/docker/b/
 docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/demo-apps-repo/application-b:v1 .
 
 
@@ -63,11 +50,11 @@ kubectl get nodes
 
 gcloud container clusters get-credentials demo-apps-cluster --zone $COMPUTE_ZONE
 
-kubectl apply -f a/app-a-config.yml
-kubectl apply -f a/app-a-deployment.yml
+kubectl apply -f $PROJECT_ROOT/docker/a/app-a-config.yml
+kubectl apply -f $PROJECT_ROOT/docker/a/app-a-deployment.yml
 
-kubectl apply -f b/app-b-config.yml
-kubectl apply -f b/app-b-deployment.yml
+kubectl apply -f $PROJECT_ROOT/docker/b/app-b-config.yml
+kubectl apply -f $PROJECT_ROOT/docker/b/app-b-deployment.yml
 
 kubectl autoscale deployment app-b --cpu-percent=80 --min=1 --max=3
 

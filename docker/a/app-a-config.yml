@@ -3,4 +3,7 @@ kind: ConfigMap
 metadata:
   name: app-a-config
 data:
-  service-b-base-url: "10.116.4.167:8082"
+  SERVICE_B_URL: "http://localhost:8082/app-b"
+  DATABASE_URL: "jdbc:postgresql://localhost:5432/a_database"
+  DATABASE_USERNAME: "postgres"
+  DATABASE_PASSWORD: "postgres"
